@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 from marketingos.agents.business_analysis import (
@@ -29,6 +30,8 @@ from marketingos.agents.video_director import (
     VideoDirectorAgent,
     VideoGenerationPort,
 )
+from marketingos.models.run import RunSection
+from marketingos.services.run_manager import RunManager
 
 from ..state import MarketingState
 
@@ -167,9 +170,21 @@ def make_video_director_node(
 
 
 def make_qa_node(
-    *, budget_ledger: BudgetLedgerPort | None = None, llm: LanguageModelPort | None = None
+    *,
+    budget_ledger: BudgetLedgerPort | None = None,
+    llm: LanguageModelPort | None = None,
+    run_manager: RunManager | None = None,
 ) -> NodeAction:
-    """Build the QA node, backed by the given budget ledger and (optional) LLM."""
+    """Build the QA node, backed by the given budget ledger and (optional) LLM.
+
+    Args:
+        budget_ledger: Budget ledger port passed through to :class:`QAAgent`.
+        llm: Optional language model port passed through to :class:`QAAgent`.
+        run_manager: If given, the QA report is persisted to
+            ``{run_dir}/05_qa/qa_report.json`` immediately after the agent
+            returns, regardless of whether QA passed or failed, so a failed
+            run can still be debugged from disk.
+    """
     agent = QAAgent(budget_ledger=budget_ledger, llm=llm)
 
     async def qa_node(state: MarketingState) -> MarketingState:
@@ -190,6 +205,15 @@ def make_qa_node(
             videos=state.videos,
         )
         state.qa_report = await agent.execute(payload)
+
+        if run_manager is not None:
+            qa_dir = run_manager.section_dir(state.run_id, RunSection.QA)
+            qa_dir.mkdir(parents=True, exist_ok=True)
+            (qa_dir / "qa_report.json").write_text(
+                json.dumps(state.qa_report.model_dump(mode="json"), indent=2),
+                encoding="utf-8",
+            )
+
         return state
 
     return qa_node

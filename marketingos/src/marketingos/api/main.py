@@ -64,7 +64,9 @@ def _build_graph(adapters: RunAdapters):
         "video_director": make_video_director_node(
             llm=adapters.llm, video_generator=adapters.video_generator
         ),
-        "qa": make_qa_node(budget_ledger=adapters.budget_ledger, llm=adapters.llm),
+        "qa": make_qa_node(
+            budget_ledger=adapters.budget_ledger, llm=adapters.llm, run_manager=run_manager
+        ),
         "packaging": make_packaging_node(packaging_service=adapters.packaging_service),
     }
     builder = GraphBuilder(entry_point="research").add_nodes(nodes)
