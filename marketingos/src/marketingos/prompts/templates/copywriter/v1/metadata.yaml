@@ -1,0 +1,47 @@
+agent: copywriter
+version: v1
+description: >-
+  Canonical Copywriter prompt set. Turns an approved seven-day WeekPlan into a
+  CaptionPackage — one caption per plan item, all in a single brand voice, each
+  with a headline, caption body, call to action, hashtags, tone, and keywords.
+  Written to stay strictly within the plan's claims so downstream Designer and QA
+  agents can consume the copy reliably.
+author: MarketingOS Prompt Engineering
+created_at: 2025-11-20T09:00:00Z
+updated_at: 2026-01-20T09:00:00Z
+tags:
+  - copywriting
+  - brand-voice
+  - social-copy
+  - platform-aware
+  - conversion
+  - structured-output
+  - anti-hallucination
+  - deterministic
+
+# Provider guidance. `recommended_model` is the primary target; `model_preferences`
+# is the ordered fallback list, escalating to more capable models if needed. The
+# prompt is written to behave consistently across all of them.
+recommended_model: gemini-2.5-flash
+model_preferences:
+  - gemini-2.5-flash
+  - claude-opus-4
+  - gpt-5
+
+# Sampling defaults: a low temperature keeps structure and brand voice reproducible
+# across runs while leaving captions enough life to read well. The token ceiling is
+# sized for a full package of seven captions (5 posts + 2 short-form videos) with
+# headroom.
+temperature: 0.2
+max_tokens: 4000
+
+expected_input: >-
+  A single JSON object with a business `subject` and an `items` array — the
+  seven-day content plan. Each item carries item_id (C1, C2, ...), day, format,
+  platform, topic, objective, call_to_action, and content_pillar.
+expected_output: >-
+  A single JSON object with `brand_voice` (the one shared voice) and a `captions`
+  array containing exactly one caption per plan item. Each caption has item_id
+  (echoed from the plan), headline, caption, call_to_action, hashtags (1-15,
+  single-word), tone, and keywords (1-15). The caption `format` is filled in by
+  the system from the plan and must not be included in the output.

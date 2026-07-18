@@ -1,0 +1,64 @@
+agent: video_director
+version: v1
+description: >-
+  Canonical Video Director prompt set. Converts one planned video item (plan
+  item, approved caption, brand voice, and approved image asset ids) into a
+  complete VideoDirection: script, numbered scene/shot storyboard, timed
+  non-overlapping subtitles, and asset references drawn only from the approved
+  creative package. Direction only — a separate tool renders the video; this
+  agent never generates pixels or footage. Invoked once per video item (2 calls
+  per campaign, run concurrently), not once for the whole package. NOTE:
+  VideoDirectorAgent only loads this template when a PromptRepository is
+  explicitly injected (`self.prompts is not None`); with no repository injected
+  it falls back to an equivalent built-in system prompt
+  (`_DEFAULT_SYSTEM_PROMPT`) hardcoded in video_director.py. In both cases the
+  code appends the actual configured duration budget
+  ("Keep the total shot duration at or under {max_duration_seconds} seconds.")
+  after the base prompt at render time — this template deliberately does not
+  hardcode a duration figure, so it stays correct regardless of the configured
+  budget (default 60s, configurable up to 180s).
+author: MarketingOS Prompt Engineering
+created_at: 2025-12-08T09:00:00Z
+updated_at: 2026-01-20T09:00:00Z
+tags:
+  - video-direction
+  - short-form-video
+  - storyboard
+  - per-item-invocation
+  - asset-grounded
+  - structured-output
+  - deterministic
+  - anti-hallucination
+  - conditional-registry-fallback
+
+# Provider guidance. `recommended_model` is the primary target; `model_preferences`
+# is the ordered fallback list, escalating to more capable models if needed. The
+# prompt is written to behave consistently across all of them.
+recommended_model: gemini-2.5-flash
+model_preferences:
+  - gemini-2.5-flash
+  - claude-opus-4
+  - gpt-5
+
+# Sampling defaults: low temperature, since scene/shot numbering, subtitle
+# timing, and asset references must be structurally exact rather than
+# creatively varied. The token ceiling covers a full storyboard (script,
+# several scenes with multiple shots each, and a matching subtitle track) for
+# one video with headroom.
+temperature: 0.2
+max_tokens: 2500
+
+expected_input: >-
+  A single JSON object for one video item: subject, item (item_id, day,
+  platform, topic, objective, call_to_action, content_pillar), caption
+  (headline, caption, call_to_action, tone, keywords), brand_voice, and
+  approved_asset_ids.
+expected_output: >-
+  A single JSON object with script, scenes (numbered 1..n, each with
+  description, voice_over, and shots numbered 1..n within the scene — each
+  shot has description, framing, and duration_seconds up to 30), subtitles
+  (ordered, non-overlapping, matching the voice-over), and asset_references
+  (ids drawn only from approved_asset_ids, or empty). item_id is attached by
+  the system and must not be included. Validated in code; direction that
+  violates numbering, subtitle ordering, the configured duration budget, or
+  references an unapproved asset id is rejected and regenerated.

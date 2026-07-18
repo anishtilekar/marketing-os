@@ -1,0 +1,158 @@
+# Identity. `agent` is the typed field the prompt-loading models validate
+# against (mirrors the version directory); `name` is included alongside it per
+# the field list this package was specified with. Both carry the same value.
+agent: research
+name: research
+display_name: Research Collector
+version: v1
+description: >-
+  Canonical Research prompt set. Collects publicly available factual
+  information about a business from its website, public Instagram profile, and
+  public web search, and organises it into categorised, source-attributed
+  observed facts. Performs no analysis, inference, or recommendation — that is
+  the Business Analysis agent's responsibility. First functional stage of the
+  MarketingOS pipeline.
+owner: MarketingOS Prompt Engineering
+created_at: 2025-11-10T09:00:00Z
+updated_at: 2026-01-20T09:00:00Z
+tags:
+  - research
+  - data-collection
+  - fact-gathering
+  - public-sources
+  - pipeline-stage-1
+  - deterministic
+  - anti-hallucination
+  - structured-output
+
+# Provider guidance. `recommended_model` is the primary target; `model_preferences`
+# is the ordered fallback list, escalating to more capable models if needed. The
+# prompt is written to behave consistently across all of them.
+recommended_model: gemini-2.5-flash
+model_preferences:
+  - gemini-2.5-flash
+  - claude-opus-4
+  - gpt-5
+
+# Sampling defaults: low temperature, since this agent's output must be a
+# faithful restatement of source material, not a creative act. `max_tokens` is
+# sized for a comprehensive fact set (a single business can yield dozens of
+# small fact objects across three channels) with headroom.
+temperature: 0.2
+max_tokens: 6000
+
+# Completion behaviour. The output is a single JSON object that downstream
+# agents validate as a whole; there is no use for the model streaming a
+# partially-formed record, so streaming is left off and the full response is
+# validated on receipt.
+response_format: json_object
+supports_streaming: false
+timeout_seconds: 60
+
+# Caching. Public business facts are unlikely to change materially within a
+# day, so a short-TTL cache keyed on the request identifiers avoids redundant
+# collection for repeat runs against the same business. Set enabled: false for
+# any workflow that requires always-fresh research.
+cache:
+  enabled: true
+  ttl_seconds: 86400
+  key_fields:
+    - website_url
+    - instagram_username
+    - business_name
+
+# Tools this agent's collection channels depend on. `ResearchInput` requires at
+# least one identifier, and each identifier enables exactly one of these tools
+# (website_url -> website_scraper, instagram_username -> instagram_public_reader,
+# business_name -> search_tool) — not all three run on every request.
+requires_tools:
+  - website_scraper
+  - instagram_public_reader
+  - search_tool
+
+# Describes ResearchInput: at least one identifier must be supplied.
+input_schema:
+  type: object
+  properties:
+    website_url:
+      type: string
+      format: uri
+      description: Official website to scrape for public content.
+    instagram_username:
+      type: string
+      description: Public Instagram handle to read (leading '@' is stripped).
+    business_name:
+      type: string
+      description: Business name to look up via public web search.
+  required_any_of:
+    - website_url
+    - instagram_username
+    - business_name
+
+# Describes what the model itself must emit. The full ResearchResult contract
+# (run_id, consolidated sources, urls_visited, collected_at, confidence_score)
+# is assembled by the system around this model output, not produced by it.
+output_schema:
+  type: object
+  properties:
+    facts:
+      type: array
+      items:
+        type: object
+        properties:
+          category:
+            type: string
+            enum:
+              - website_content
+              - about
+              - products_services
+              - contact
+              - brand_messaging
+              - social_presence
+              - public_info
+          statement:
+            type: string
+            minLength: 1
+          source_type:
+            type: string
+            enum: [website, instagram, web_search]
+          source_url:
+            type: [string, "null"]
+          confidence:
+            type: number
+            minimum: 0.0
+            maximum: 1.0
+        required: [category, statement, source_type, confidence]
+    failed_sources:
+      type: array
+      items:
+        type: string
+        description: "'channel: reason' entry for a channel that could not be collected."
+  required: [facts]
+
+# Pipeline routing. Per the MarketingOS architecture, Research output feeds the
+# Synthetic Source agent, which converts raw facts into copyright-safe source
+# material before Business Analysis runs. NOTE: at the time of writing, the
+# Synthetic Source agent is not yet implemented, so the current code path
+# passes ResearchResult directly to Business Analysis; this field records the
+# intended routing so the wiring can be updated without a metadata change once
+# Synthetic Source ships.
+next_agent: synthetic_source
+
+# Guardrails. Enforced by prompt instruction today; candidates for automated
+# output validation once this agent is LLM-backed.
+guardrails:
+  - Collects only publicly accessible information; never accesses login-walled, paywalled, or private content.
+  - Performs no analysis, evaluation, or quality judgement of any finding.
+  - Never infers target audience, positioning, strategy, or business intent.
+  - Never guesses or fabricates missing information; reports it as a failed source instead.
+  - Never produces recommendations, opinions, or next-step suggestions.
+  - Outputs are strictly factual and structured — observed facts and failed sources only.
+
+expected_input: >-
+  A business identified by at least one of website_url, instagram_username, or
+  business_name.
+expected_output: >-
+  A single JSON object with a required `facts` array (each fact categorised,
+  source-attributed, and confidence-scored) and an optional `failed_sources`
+  array naming channels that could not be collected and why.

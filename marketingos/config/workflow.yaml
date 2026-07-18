@@ -1,0 +1,3 @@
+max_revisions: 2
+enable_human_review: true
+checkpoint_after_each_agent: true

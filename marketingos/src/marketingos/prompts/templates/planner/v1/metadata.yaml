@@ -1,0 +1,56 @@
+agent: planner
+version: v1
+description: >-
+  Canonical Planner prompt set. Converts an approved first-week Strategy into a
+  seven-day WeekPlan: exactly 5 posts and 2 short-form videos, one item per day,
+  each with a topic, objective, call to action, platform, and the exact strategy
+  content pillar it belongs to. Planning only — no captions, scripts, or
+  creative assets, which belong to the downstream Copywriter, Designer, and
+  Video Director agents. NOTE: PlannerAgent only loads this template when a
+  PromptRepository is explicitly injected (`self.prompts is not None`); with no
+  repository injected it falls back to an equivalent built-in system prompt
+  (`_DEFAULT_SYSTEM_PROMPT`) hardcoded in planner.py. This template's content is
+  written to be strictly consistent with that fallback's rules — same content
+  mix, id scheme, and constraints — so behaviour matches whichever path is used.
+author: MarketingOS Prompt Engineering
+created_at: 2025-11-28T09:00:00Z
+updated_at: 2026-01-20T09:00:00Z
+tags:
+  - content-planning
+  - week-plan
+  - strategy-anchored
+  - grounded-output
+  - structured-output
+  - deterministic
+  - anti-hallucination
+  - conditional-registry-fallback
+
+# Provider guidance. `recommended_model` is the primary target; `model_preferences`
+# is the ordered fallback list, escalating to more capable models if needed. The
+# prompt is written to behave consistently across all of them.
+recommended_model: gemini-2.5-flash
+model_preferences:
+  - gemini-2.5-flash
+  - claude-opus-4
+  - gpt-5
+
+# Sampling defaults: low temperature, since the content mix, daily distribution,
+# id scheme, and pillar names must be exactly correct rather than creatively
+# varied. The token ceiling covers all 7 items (5 posts + 2 videos) with
+# headroom.
+temperature: 0.2
+max_tokens: 2500
+
+expected_input: >-
+  A single JSON object with the approved strategy: subject, goals (statements
+  only), target_audience (description, needs), positioning, key_messages,
+  content_pillars (name, description), and success_metrics (name, target).
+expected_output: >-
+  A single JSON object with one field, `items`: exactly 7 objects (5 with
+  format "post", 2 with format "short_form_video"), ids C1-C7 in schedule
+  order, one item per day across days 1-7, each with publish_time, platform,
+  topic, objective, call_to_action, content_pillar (must exactly match a
+  strategy pillar name), and depends_on (ids of strictly-earlier items, or
+  empty). Validated in code; a plan that violates the mix, daily distribution,
+  id uniqueness, dependency ordering, or pillar anchoring is rejected and
+  regenerated.

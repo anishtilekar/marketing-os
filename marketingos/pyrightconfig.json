@@ -1,0 +1,11 @@
+{
+    "venvPath": "..",
+    "venv": ".venv",
+    "extraPaths": [
+        "src"
+    ],
+    "typeCheckingMode": "standard",
+    "include": [
+        "src/marketingos"
+    ]
+}

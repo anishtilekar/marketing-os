@@ -1,0 +1,57 @@
+agent: packaging
+version: v1
+description: >-
+  Canonical Packaging README-composition prompt set. Writes the client-facing
+  README.md shipped inside the final campaign package, summarising the approved
+  subject, QA status, positioning, content pillars, and publishing schedule.
+  Coordination only — never invents a fact, figure, or deliverable beyond the
+  approved summary it is given, and never touches file paths, checksums, or
+  manifest details, which remain entirely code- and packaging-service-owned.
+  NOTE: at the time of writing, PackagingAgent composes the README
+  deterministically in Python (`_compose_readme`, a static method) and does not
+  call a language model; this prompt is a forward-looking specification for an
+  LLM-assisted README-composition step. The agent's own docstring already
+  anticipates this — its `prompts` parameter is documented as "unused by the
+  built-in README composer; available to subclasses."
+author: MarketingOS Prompt Engineering
+created_at: 2025-12-05T09:00:00Z
+updated_at: 2026-01-20T09:00:00Z
+tags:
+  - packaging
+  - readme-generation
+  - client-facing
+  - campaign-summary
+  - single-invocation
+  - structured-output
+  - deterministic
+  - anti-hallucination
+  - not-yet-wired
+
+# Provider guidance. `recommended_model` is the primary target; `model_preferences`
+# is the ordered fallback list, escalating to more capable models if needed. The
+# prompt is written to behave consistently across all of them.
+recommended_model: gemini-2.5-flash
+model_preferences:
+  - gemini-2.5-flash
+  - claude-opus-4
+  - gpt-5
+
+# Sampling defaults: low temperature, since this is a factual delivery summary
+# that must exactly reflect the approved counts, positioning, pillars, and
+# schedule, not a creative departure from them. The token ceiling covers a full
+# README (title, four sections, up to 5 pillars and 7 schedule entries) with
+# headroom. This agent is invoked once per campaign package, not per item.
+temperature: 0.2
+max_tokens: 1500
+
+expected_input: >-
+  A single JSON object summarising the approved campaign: subject, qa_status,
+  positioning, content_pillars (name, description), schedule (day, time,
+  platform, format, topic per item), post_count, video_count, and
+  generated_date.
+expected_output: >-
+  A single JSON object with one field, `readme`: a Markdown string containing a
+  title, a short introduction, and exactly four required sections in order —
+  Contents, Positioning, Content pillars, Publishing schedule — built strictly
+  from the given input. File paths, checksums, asset ids, and manifest details
+  are never part of the model's output; those remain entirely system-generated.

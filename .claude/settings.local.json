@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(../.venv/Scripts/python.exe -c ' *)",
+      "Bash(../.venv/Scripts/python.exe -m pytest tests -q -p no:cacheprovider --no-cov)",
+      "Bash(../.venv/Scripts/python.exe -m pytest tests -p no:cacheprovider --no-cov)",
+      "Bash(../.venv/Scripts/python.exe -m ruff check src/marketingos/models/business_context.py src/marketingos/agents/business_analysis.py src/marketingos/agents/strategist.py src/marketingos/prompts/registry.py)",
+      "Bash(../.venv/Scripts/python.exe -m pytest tests -p no:cacheprovider --no-cov -q)",
+      "Bash(npx --yes pyright marketingos/src/marketingos/orchestration/graph.py)"
+    ]
+  }
+}
