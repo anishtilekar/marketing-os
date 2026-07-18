@@ -10,6 +10,7 @@ from .image_gen_client import (
     IMAGE_GENERATION,
     ImageGenerationRequest,
 )
+from .placeholder_image_client import PlaceholderImageClient
 
 __all__ = [
     "Compositor",
@@ -19,4 +20,5 @@ __all__ = [
     "IMAGE_GENERATION",
     "ImageGenerationRequest",
     "ImageMediaType",
+    "PlaceholderImageClient",
 ]

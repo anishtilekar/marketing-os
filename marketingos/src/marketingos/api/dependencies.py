@@ -24,7 +24,7 @@ from marketingos.config import load_settings
 from marketingos.services.cost_guard import CostGuardBudgetLedger
 from marketingos.services.packaging_service import PackagingService
 from marketingos.services.run_manager import RunHandle, RunManager
-from marketingos.tools.image import GeminiImageClient
+from marketingos.tools.image import GeminiImageClient, PlaceholderImageClient
 from marketingos.tools.llm import GeminiClient
 from marketingos.tools.video import VideoAssembler
 from marketingos.tools.web import InstagramPublicReader, WebsiteScraper
@@ -73,10 +73,12 @@ def build_run_dependencies(max_budget: Decimal) -> tuple[RunHandle, RunAdapters]
             model=settings.models.default_llm,
             default_max_output_tokens=settings.models.max_tokens,
         ),
-        image_generator=GeminiImageClient(
-            cost_guard=guard,
-            model=settings.models.default_image_model,
-        ),
+        # Swapped back to GeminiImageClient once billing/quota is available.
+        # image_generator=GeminiImageClient(
+        #     cost_guard=guard,
+        #     model=settings.models.default_image_model,
+        # ),
+        image_generator=PlaceholderImageClient(),
         video_generator=VideoAssembler(cost_guard=guard),
         website_scraper=WebsiteScraper(cost_guard=guard),
         instagram_reader=InstagramPublicReader(cost_guard=guard),
