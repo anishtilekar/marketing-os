@@ -7,7 +7,7 @@ from .instagram_public_reader import (
     InstagramPublicReader,
     InstagramReadRequest,
 )
-from .website_scraper import WEBSITE_SCRAPING, WebsiteScrapeRequest, WebsiteScraper
+from .website_scraper import WEBSITE_SCRAPING, WebsiteScraper, WebsiteScrapeRequest
 
 __all__ = [
     "INSTAGRAM_READING",

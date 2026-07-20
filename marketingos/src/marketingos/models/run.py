@@ -51,6 +51,7 @@ class RunSection(StrEnum):
     COST = "06_cost"
     LOGS = "07_logs"
     PACKAGE = "package"
+    EVALUATION = "eval"
 
 
 class RunRecord(BaseModel):

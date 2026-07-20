@@ -1,11 +1,19 @@
 """WebsiteScraper — public business-website content extraction.
 
 Fetches exactly one URL (no crawling) and extracts title, tagline, about
-text, main text, a heuristic list of offerings, and any ``mailto:``/
-``tel:`` contact links, satisfying
+text, main text, ``h1``–``h3`` headings, JSON-LD organization identity
+(name, description, official social profiles), a heuristic list of
+offerings, and any ``mailto:``/``tel:`` contact links, satisfying
 :class:`marketingos.agents.research.WebsiteScraperPort`. Parsing uses the
 stdlib-only helper in ``tools/web/_html.py`` — no BeautifulSoup/lxml
 dependency for the modest slice of a page this needs.
+
+Headings and JSON-LD exist precisely because search engines demand them,
+so they survive in the initial HTML of JS-rendered storefronts whose
+``<p>`` markup is nothing but navigation labels — the pages where the
+paragraph heuristics alone used to come back nearly empty. Paragraphs
+shorter than a few words are treated as nav labels and excluded from
+``main_text`` for the same reason.
 
 Compliance, before any content is parsed
 ------------------------------------------
@@ -37,7 +45,7 @@ get exactly right.
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Final
+from typing import Any, Final
 from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
 
@@ -45,13 +53,17 @@ import httpx
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
-from marketingos.agents.research import ContactDetails, WebsiteSnapshot
+from marketingos.agents.research import (
+    ContactDetails,
+    OrganizationFacts,
+    WebsiteSnapshot,
+)
 from marketingos.exceptions.tool import ToolExecutionError
 from marketingos.models.cost import CostCategory
 from marketingos.services.cost_guard import CostGuard
 from marketingos.tools.base import Tool
 from marketingos.tools.web._compliance import refuse_if_login_walled
-from marketingos.tools.web._html import extract_page
+from marketingos.tools.web._html import PageExtract, extract_page
 
 __all__ = ["WEBSITE_SCRAPING", "WebsiteScrapeRequest", "WebsiteScraper"]
 
@@ -59,6 +71,55 @@ WEBSITE_SCRAPING: Final[str] = "website_scraping"
 _DEFAULT_USER_AGENT: Final[str] = "MarketingOS-ResearchBot/1.0 (+public content only)"
 _MAX_LIST_ITEMS: Final[int] = 20
 _MAX_TEXT_CHARS: Final[int] = 5000
+_MAX_HEADINGS: Final[int] = 12
+_MAX_SOCIAL_PROFILES: Final[int] = 8
+
+#: Paragraphs shorter than this many words are treated as navigation
+#: labels ("Featured", "Shop Icons", ...) rather than content. JS-rendered
+#: storefronts mark up their nav as ``<p>`` tags, and joining those labels
+#: produced a garbage "main text" that drowned out real facts.
+_MIN_PARAGRAPH_WORDS: Final[int] = 4
+
+#: JSON-LD ``@type`` values treated as the site's own organization record.
+_ORG_TYPES: Final[frozenset[str]] = frozenset(
+    {"organization", "corporation", "localbusiness", "brand", "onlinestore"}
+)
+
+
+def _org_from_json_ld(blocks: list[dict[str, Any]]) -> OrganizationFacts | None:
+    """Pull the first organization-shaped JSON-LD node into typed facts."""
+    for node in blocks:
+        raw_type = node.get("@type", "")
+        types = raw_type if isinstance(raw_type, list) else [raw_type]
+        if not any(str(t).lower() in _ORG_TYPES for t in types):
+            continue
+        name = node.get("name")
+        description = node.get("description")
+        same_as = node.get("sameAs", [])
+        if isinstance(same_as, str):
+            same_as = [same_as]
+        profiles = tuple(
+            str(u) for u in same_as if isinstance(u, str) and u.startswith("http")
+        )[:_MAX_SOCIAL_PROFILES]
+        if not (name or description or profiles):
+            continue
+        return OrganizationFacts(
+            name=str(name) if isinstance(name, str) and name.strip() else None,
+            description=(
+                str(description)
+                if isinstance(description, str) and description.strip()
+                else None
+            ),
+            same_as=profiles,
+        )
+    return None
+
+
+def _substantive_paragraphs(page: PageExtract) -> list[str]:
+    """Drop nav-label fragments, keeping only sentence-like paragraphs."""
+    return [
+        p for p in page.paragraphs if len(p.split()) >= _MIN_PARAGRAPH_WORDS
+    ]
 
 
 class WebsiteScrapeRequest(BaseModel):
@@ -169,10 +230,9 @@ class WebsiteScraper(Tool[WebsiteScrapeRequest, WebsiteSnapshot]):
         page = extract_page(html)
 
         tagline = page.meta.get("og:description") or page.meta.get("description")
-        about = next(
-            (p for p in page.paragraphs if "about" in p[:80].lower()), None
-        )
-        main_text = " ".join(page.paragraphs)[:_MAX_TEXT_CHARS] or None
+        paragraphs = _substantive_paragraphs(page)
+        about = next((p for p in paragraphs if "about" in p[:80].lower()), None)
+        main_text = " ".join(paragraphs)[:_MAX_TEXT_CHARS] or None
 
         snapshot = WebsiteSnapshot(
             url=str(response.url),
@@ -180,6 +240,8 @@ class WebsiteScraper(Tool[WebsiteScrapeRequest, WebsiteSnapshot]):
             tagline=tagline,
             about_text=about,
             main_text=main_text,
+            headings=tuple(dict.fromkeys(page.headings))[:_MAX_HEADINGS],
+            organization=_org_from_json_ld(page.json_ld),
             products_services=tuple(dict.fromkeys(page.list_items))[:_MAX_LIST_ITEMS],
             contact=ContactDetails(
                 emails=tuple(dict.fromkeys(page.emails)),

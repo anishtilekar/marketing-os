@@ -1,7 +1,53 @@
-default_llm: gemini-flash-latest
+# Model & provider configuration.
+#
+# A *provider* names which concrete client the provider factory
+# (marketingos.tools.factory) builds for a capability; the model id names
+# which model that client calls. Both are configuration: switching provider
+# or model is an edit here, never a code change.
+
+# -- Text generation (LLM) --------------------------------------------------
+# Providers: gemini
+llm_provider: gemini
+default_llm: gemini-2.0-flash
 fallback_llm: gemini-2.0-flash-001
 temperature: 0.7
 max_tokens: 8192
+# Free tier => zero rates. Set real per-1k-token rates to start pricing LLM
+# calls without any code change.
+llm_input_cost_per_1k: 0
+llm_output_cost_per_1k: 0
 
-default_image_model: gemini-2.5-flash-image
+# -- Image generation -------------------------------------------------------
+# Providers:
+#   placeholder  - local Pillow render, no API key (demo-safe, no billing)
+#   flux_schnell - FLUX.1 [schnell] via Together AI (needs TOGETHER_API_KEY
+#                  + billing enabled on the account)
+#   gemini       - Gemini 2.5 Flash Image (needs GEMINI_API_KEY; Gemini's
+#                  free tier does not cover image generation)
+# Switch image provider by changing this one line.
+image_provider: placeholder
+# Optional override; leave unset to use the selected provider's own default
+# model id (so flipping image_provider alone is enough to switch).
+# default_image_model: black-forest-labs/FLUX.1-schnell-Free
 image_quality: standard
+image_cost_per_image: 0
+
+# -- Video generation -------------------------------------------------------
+# Providers:
+#   placeholder     - copies a static stub MP4, no MoviePy/ffmpeg needed
+#   local_assembler - real Ken-Burns render over approved stills (local,
+#                     zero-cost, no API key, but pulls in MoviePy/ffmpeg)
+video_provider: placeholder
+
+# -- Text-focused / frontend-development profile -----------------------------
+# The two providers above (placeholder image + placeholder video) are the
+# current profile: every text-generating agent (research, strategy, plan,
+# captions, image prompts, video scripts) still runs for real; only the
+# paid/heavy media calls are stubbed out. This lets frontend work proceed
+# without depending on Together AI billing or Gemini image quota.
+#
+# To restore full media generation once billing/quota is sorted, flip:
+#   image_provider: flux_schnell   (or gemini)
+#   video_provider: local_assembler
+# No other code or frontend change is needed — the API always serves
+# whatever bytes exist on disk for a given asset.

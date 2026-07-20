@@ -1,49 +1,49 @@
 research:
-  model: gemini-2.5-flash-image
+  model: gemini-2.0-flash
   temperature: 0.2
   enabled: true
 
 synthetic_source:
-  model: gemini-2.5-flash-image
+  model: gemini-2.0-flash
   temperature: 0.3
   enabled: true
 
 business_analysis:
-  model: gemini-2.5-flash-image
+  model: gemini-2.0-flash
   temperature: 0.2
   enabled: true
 
 strategist:
-  model: gemini-2.5-flash-image
+  model: gemini-2.0-flash
   temperature: 0.35
   enabled: true
 
 planner:
-  model: gemini-2.5-flash-image
+  model: gemini-2.0-flash
   temperature: 0.4
   enabled: true
 
 copywriter:
-  model: gemini-2.5-flash-image
+  model: gemini-2.0-flash
   temperature: 0.6
   enabled: true
 
 designer:
-  model: gemini-2.5-flash-image
+  model: gemini-2.0-flash
   temperature: 0.5
   enabled: true
 
 video_director:
-  model: gemini-2.5-flash-image
+  model: gemini-2.0-flash
   temperature: 0.5
   enabled: true
 
 qa:
-  model: gemini-2.5-flash-image
+  model: gemini-2.0-flash
   temperature: 0.0
   enabled: true
 
 packaging:
-  model: gemini-2.5-flash-image
+  model: gemini-2.0-flash
   temperature: 0.1
   enabled: true

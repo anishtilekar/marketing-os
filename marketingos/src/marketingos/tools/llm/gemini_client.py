@@ -22,8 +22,10 @@ injectable so tests can supply a mock transport and never touch the network.
 
 from __future__ import annotations
 
+import asyncio
 import math
 import os
+import random
 from decimal import Decimal
 from typing import Any, Final
 
@@ -48,8 +50,10 @@ __all__ = [
 #: Capability key under which this tool registers.
 TEXT_GENERATION: Final[str] = "text_generation"
 
-#: Model used by default; matches every entry in ``config/agents.yaml``.
-DEFAULT_MODEL: Final[str] = "gemini-2.5-flash-image"
+#: Model used by default; matches ``default_llm`` in ``config/models.yaml``.
+#: A text model, deliberately: this is the text-generation client, so it must
+#: not default to an image model (e.g. ``gemini-2.5-flash-image``).
+DEFAULT_MODEL: Final[str] = "gemini-flash-latest"
 
 #: Environment variable holding the API key.
 GEMINI_API_KEY_ENV: Final[str] = "GEMINI_API_KEY"
@@ -62,6 +66,12 @@ _API_BASE: Final[str] = "https://generativelanguage.googleapis.com/v1beta/models
 _CHARS_PER_TOKEN: Final[int] = 4
 
 _TOKENS_PER_UNIT: Final[Decimal] = Decimal("1000")
+
+#: HTTP statuses that are transient and worth retrying rather than failing
+#: the whole run: 429 (rate limit — the free tier's 5-requests/minute cap,
+#: which one campaign trips because it fires ~8 calls back to back), 500
+#: (transient provider error), 503 (temporarily overloaded/unavailable).
+_RETRYABLE_STATUSES: Final[frozenset[int]] = frozenset({429, 500, 503})
 
 
 class GeminiRequest(BaseModel):
@@ -106,6 +116,9 @@ class GeminiClient(Tool[GeminiRequest, GeminiResponse]):
         default_max_output_tokens: int = 2048,
         http_client: httpx.AsyncClient | None = None,
         timeout_seconds: float = 60.0,
+        max_retries: int = 6,
+        retry_base_delay_seconds: float = 2.0,
+        retry_max_delay_seconds: float = 30.0,
     ) -> None:
         """Initialise the client.
 
@@ -123,6 +136,12 @@ class GeminiClient(Tool[GeminiRequest, GeminiResponse]):
             http_client: Transport to use. Defaults to a client owned by this
                 instance; tests inject one with a mock transport.
             timeout_seconds: Per-request timeout for the default client.
+            max_retries: How many times to retry a transient failure (429 /
+                500 / 503) before giving up. The default clears a free-tier
+                rate-limit window comfortably; set to ``0`` to disable retry.
+            retry_base_delay_seconds: Base for exponential backoff, used only
+                when the provider does not supply its own retry delay.
+            retry_max_delay_seconds: Ceiling on any single backoff wait.
 
         Raises:
             ToolConfigurationError: If no API key is available.
@@ -142,6 +161,9 @@ class GeminiClient(Tool[GeminiRequest, GeminiResponse]):
         self._default_max_output_tokens = default_max_output_tokens
         self._cost_guard = cost_guard
         self._client = http_client or httpx.AsyncClient(timeout=timeout_seconds)
+        self._max_retries = max(0, max_retries)
+        self._retry_base_delay = retry_base_delay_seconds
+        self._retry_max_delay = retry_max_delay_seconds
         self._logger = logger.bind(component="GeminiClient", model=model)
 
     # -- Tool identity -------------------------------------------------------
@@ -241,13 +263,19 @@ class GeminiClient(Tool[GeminiRequest, GeminiResponse]):
     # -- invocation ----------------------------------------------------------
 
     async def invoke(self, payload: GeminiRequest) -> GeminiResponse:
-        """Generate text for one request.
+        """Generate text for one request, retrying transient failures.
 
-        Performs exactly one HTTP call: no retry or backoff, which belongs to
-        the orchestration node. Budget enforcement is applied automatically by
+        A transient failure (429 rate limit, 500, or 503) is retried with
+        backoff — honouring the provider's own suggested retry delay when it
+        supplies one — up to ``max_retries`` times, because a single campaign
+        fires ~8 calls in quick succession and the free tier's 5-per-minute
+        cap would otherwise fail the whole run. Non-transient errors, and a
+        transient error that outlasts every retry, raise as before. Budget
+        enforcement is applied automatically by
         :meth:`marketingos.tools.base.Tool.__init_subclass__`, which wraps
         this method with the cost guard, so the request is priced and
-        authorised before it is sent and recorded after it succeeds.
+        authorised once before the first attempt and recorded after success;
+        retries of the same logical call are not re-charged.
 
         Args:
             payload: The request to send.
@@ -258,8 +286,8 @@ class GeminiClient(Tool[GeminiRequest, GeminiResponse]):
         Raises:
             InsufficientBudgetError: If the call would exceed the budget.
                 Raised by the decorator, before any request is sent.
-            ToolExecutionError: If the request fails, or the response is not
-                shaped as expected.
+            ToolExecutionError: If the request fails after exhausting retries,
+                or the response is not shaped as expected.
         """
         body: dict[str, Any] = {
             "system_instruction": {"parts": [{"text": payload.system_prompt}]},
@@ -270,21 +298,7 @@ class GeminiClient(Tool[GeminiRequest, GeminiResponse]):
             },
         }
         url = f"{_API_BASE}/{self._model}:generateContent"
-        try:
-            response = await self._client.post(
-                url, json=body, headers={"x-goog-api-key": self._api_key}
-            )
-            response.raise_for_status()
-            data = response.json()
-        except httpx.HTTPStatusError as exc:
-            raise ToolExecutionError(
-                f"Gemini returned {exc.response.status_code} for model "
-                f"{self._model!r}: {exc.response.text[:500]}"
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise ToolExecutionError(
-                f"Gemini request failed for model {self._model!r}: {exc}"
-            ) from exc
+        data = await self._post_with_retry(url, body)
 
         result = self._parse(data)
         self._logger.bind(
@@ -294,6 +308,73 @@ class GeminiClient(Tool[GeminiRequest, GeminiResponse]):
             output_length=len(result.text),
         ).debug("Generated text")
         return result
+
+    async def _post_with_retry(
+        self, url: str, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        """POST ``body`` to ``url``, retrying transient failures with backoff.
+
+        Returns the decoded JSON on success. Raises :class:`ToolExecutionError`
+        for a non-retryable status, or for a transient one that survives every
+        retry.
+        """
+        headers = {"x-goog-api-key": self._api_key}
+        for attempt in range(self._max_retries + 1):
+            try:
+                response = await self._client.post(url, json=body, headers=headers)
+                response.raise_for_status()
+                return response.json()  # type: ignore[no-any-return]
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                if status not in _RETRYABLE_STATUSES or attempt == self._max_retries:
+                    raise ToolExecutionError(
+                        f"Gemini returned {status} for model "
+                        f"{self._model!r}: {exc.response.text[:500]}"
+                    ) from exc
+                delay = self._retry_delay(exc.response, attempt)
+                self._logger.bind(
+                    event="gemini.retry",
+                    status=status,
+                    attempt=attempt + 1,
+                    delay_seconds=round(delay, 2),
+                ).warning("Transient Gemini error; backing off before retry")
+                await asyncio.sleep(delay)
+            except httpx.HTTPError as exc:
+                # Transport-level failures (timeouts, connection resets) are
+                # transient too; retry them on the same schedule.
+                if attempt == self._max_retries:
+                    raise ToolExecutionError(
+                        f"Gemini request failed for model {self._model!r}: {exc}"
+                    ) from exc
+                delay = self._backoff(attempt)
+                self._logger.bind(
+                    event="gemini.retry",
+                    attempt=attempt + 1,
+                    delay_seconds=round(delay, 2),
+                ).warning("Transient Gemini transport error; backing off")
+                await asyncio.sleep(delay)
+        # The loop always returns or raises within max_retries+1 iterations;
+        # this satisfies the type checker that a value is always produced.
+        raise ToolExecutionError(  # pragma: no cover
+            f"Gemini request failed for model {self._model!r}: retries exhausted"
+        )
+
+    def _retry_delay(self, response: httpx.Response, attempt: int) -> float:
+        """Seconds to wait before the next attempt.
+
+        Prefers the delay the provider itself asks for (``Retry-After`` header
+        or the ``RetryInfo.retryDelay`` in the error body), falling back to
+        exponential backoff. The result is always capped at
+        ``retry_max_delay_seconds``.
+        """
+        suggested = _suggested_retry_delay(response)
+        delay = suggested if suggested is not None else self._backoff(attempt)
+        jitter = random.uniform(0.0, 0.5)
+        return min(delay, self._retry_max_delay) + jitter
+
+    def _backoff(self, attempt: int) -> float:
+        """Exponential backoff for ``attempt`` (0-indexed), capped."""
+        return float(min(self._retry_base_delay * (2**attempt), self._retry_max_delay))
 
     def _parse(self, data: dict[str, Any]) -> GeminiResponse:
         """Extract text and usage from a ``generateContent`` response.
@@ -358,3 +439,33 @@ class GeminiClient(Tool[GeminiRequest, GeminiResponse]):
 def _estimate_tokens(text: str) -> int:
     """Approximate a token count from character length."""
     return math.ceil(len(text) / _CHARS_PER_TOKEN)
+
+
+def _suggested_retry_delay(response: httpx.Response) -> float | None:
+    """The retry delay the provider asks for, in seconds, if any.
+
+    Checks the standard ``Retry-After`` header first, then Google's
+    structured ``RetryInfo`` detail in the error body (``retryDelay: "9s"``).
+    Returns ``None`` when neither is present or parseable, leaving the caller
+    to fall back to its own backoff.
+    """
+    header = response.headers.get("retry-after")
+    if header:
+        try:
+            return float(header)
+        except ValueError:
+            pass
+    try:
+        details = response.json().get("error", {}).get("details", [])
+    except (ValueError, AttributeError, TypeError):
+        return None
+    if not isinstance(details, list):
+        return None
+    for detail in details:
+        raw = detail.get("retryDelay") if isinstance(detail, dict) else None
+        if isinstance(raw, str) and raw.endswith("s"):
+            try:
+                return float(raw[:-1])
+            except ValueError:
+                continue
+    return None

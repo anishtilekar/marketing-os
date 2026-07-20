@@ -36,6 +36,7 @@ default_llm: gpt-4.1-mini
 fallback_llm: llama3
 temperature: 0.3
 max_tokens: 4000
+image_quality: standard
 """
 
 VALID_AGENTS_YAML = """

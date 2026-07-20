@@ -4,6 +4,10 @@ __pycache__/
 .env
 data/
 *.log
+node_modules/
+frontend/dist/
+.coverage
+coverage.xml
 .pytest_cache/
 *.egg-info/
 image_model_test.txt

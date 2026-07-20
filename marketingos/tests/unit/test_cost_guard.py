@@ -144,7 +144,7 @@ async def test_successful_call_records_actual_cost_on_the_ledger():
     assert entry.status is CostStatus.COMPLETED
     assert entry.category is CostCategory.LLM_GENERATION
     assert entry.provider == "google"
-    assert entry.tool_name == "gemini-2.5-flash"
+    assert entry.tool_name == "gemini-flash-latest"
     # 10 input tokens @ 10/1k + 5 output tokens @ 30/1k = 0.1 + 0.15
     assert entry.actual_cost == Decimal("0.25")
     assert guard.spent == Decimal("0.25")
@@ -271,8 +271,15 @@ class NaiveTool(Tool[UnguardedToolInput, UnguardedToolOutput]):
     """
 
     def __init__(self, cost_guard: CostGuard | None) -> None:
-        self.cost_guard = cost_guard
+        # cost_guard is a read-only property on the base Tool, so store the
+        # guard privately and expose it via the override below (as real tools
+        # like GeminiClient do) rather than assigning to the property.
+        self._cost_guard = cost_guard
         self.calls = 0
+
+    @property
+    def cost_guard(self) -> CostGuard | None:
+        return self._cost_guard
 
     @property
     def name(self) -> str:
@@ -285,6 +292,10 @@ class NaiveTool(Tool[UnguardedToolInput, UnguardedToolOutput]):
     @property
     def provider(self) -> str:
         return "test-provider"
+
+    @property
+    def cost_category(self) -> CostCategory:
+        return CostCategory.OTHER
 
     @property
     def input_schema(self) -> type[UnguardedToolInput]:
@@ -357,7 +368,7 @@ def test_gemini_registers_under_the_text_generation_capability():
 
     assert TEXT_GENERATION in registry
     assert registry.get(TEXT_GENERATION) is client
-    assert registry.capabilities() == [TEXT_GENERATION]
+    assert registry.capabilities() == (TEXT_GENERATION,)
 
 
 def test_missing_capability_raises_tool_not_found_and_not_key_error():

@@ -8,7 +8,18 @@
       "Bash(../.venv/Scripts/python.exe -m pytest tests -p no:cacheprovider --no-cov -q)",
       "Bash(npx --yes pyright marketingos/src/marketingos/orchestration/graph.py)",
       "Bash(python -m venv venv_test)",
-      "Bash(./venv_test/Scripts/python -m pip install --quiet pillow)"
+      "Bash(./venv_test/Scripts/python -m pip install --quiet pillow)",
+      "Bash(python -c \"from marketingos.orchestration.nodes.nodes import make_qa_node; from marketingos.api.main import _build_graph; print\\('ok'\\)\")",
+      "Bash(PYTHONPATH=src python -c \"from marketingos.orchestration.nodes.nodes import make_qa_node; from marketingos.api.main import _build_graph; print\\('ok'\\)\")",
+      "Bash(PYTHONPATH=marketingos/src ./.venv/Scripts/python.exe -c \"from marketingos.orchestration.nodes.nodes import make_qa_node; from marketingos.api.main import _build_graph; print\\('ok'\\)\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(gh pr *)",
+      "Bash(gh pr create --base main --head demo-pitch --title 'Persist QA report to disk immediately after QAAgent runs' --body ' *)",
+      "PowerShell(gh pr create --base main --head demo-pitch --title \"Persist QA report to disk immediately after QAAgent runs\" --body-file \"C:\\\\Users\\\\Admin\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-Admin-MarketingOS\\\\174345af-9347-4e23-b741-9662ec01cb60\\\\scratchpad\\\\pr_body.md\")",
+      "Bash(env)",
+      "Bash(git config *)"
     ]
   }
 }

@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import asyncio
-import json
+import os
 from uuid import UUID
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from langgraph.graph import END
 
-from marketingos.api.dependencies import RunAdapters, build_run_dependencies, run_manager
+from marketingos.api.dependencies import (
+    RunAdapters,
+    build_run_dependencies,
+    run_manager,
+)
+from marketingos.api.routes.outputs import router as outputs_router
 from marketingos.api.schemas import CreateRunRequest, RunStatusResponse
 from marketingos.exceptions.workflow import WorkflowExecutionError
-from marketingos.models.run import RunStatus
 from marketingos.orchestration.graph import GraphBuilder
 from marketingos.orchestration.nodes import (
     make_business_analysis_node,
@@ -29,7 +34,29 @@ from marketingos.orchestration.nodes import (
 from marketingos.orchestration.state import BudgetState, MarketingState
 from marketingos.services.run_manager import RunHandle
 
+#: Comma-separated frontend origins allowed to call this API (e.g. your
+#: Vercel deployment's URL). Empty by default so a fresh deploy fails closed
+#: on CORS rather than silently allowing every origin.
+_ALLOWED_ORIGINS_ENV = "ALLOWED_ORIGINS"
+
 app = FastAPI(title="MarketingOS API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        origin.strip()
+        for origin in os.environ.get(_ALLOWED_ORIGINS_ENV, "").split(",")
+        if origin.strip()
+    ],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+app.include_router(outputs_router)
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    """Liveness/readiness probe for the hosting platform."""
+    return {"status": "ok"}
 
 _NODE_ORDER = (
     "research",
@@ -54,20 +81,29 @@ def _build_graph(adapters: RunAdapters):
             website_scraper=adapters.website_scraper,
             instagram_reader=adapters.instagram_reader,
             search_tool=adapters.search_tool,
+            run_manager=run_manager,
         ),
-        "synthetic": make_synthetic_resource_node(),
-        "business_analysis": make_business_analysis_node(llm=adapters.llm),
-        "strategist": make_strategist_node(llm=adapters.llm),
-        "planner": make_planner_node(llm=adapters.llm),
-        "copywriter": make_copywriter_node(llm=adapters.llm),
-        "creative": make_creative_node(image_generator=adapters.image_generator),
+        "synthetic": make_synthetic_resource_node(run_manager=run_manager),
+        "business_analysis": make_business_analysis_node(
+            llm=adapters.llm, run_manager=run_manager
+        ),
+        "strategist": make_strategist_node(llm=adapters.llm, run_manager=run_manager),
+        "planner": make_planner_node(llm=adapters.llm, run_manager=run_manager),
+        "copywriter": make_copywriter_node(llm=adapters.llm, run_manager=run_manager),
+        "creative": make_creative_node(
+            image_generator=adapters.image_generator, run_manager=run_manager
+        ),
         "video_director": make_video_director_node(
-            llm=adapters.llm, video_generator=adapters.video_generator
+            llm=adapters.llm,
+            video_generator=adapters.video_generator,
+            run_manager=run_manager,
         ),
         "qa": make_qa_node(
             budget_ledger=adapters.budget_ledger, llm=adapters.llm, run_manager=run_manager
         ),
-        "packaging": make_packaging_node(packaging_service=adapters.packaging_service),
+        "packaging": make_packaging_node(
+            packaging_service=adapters.packaging_service, run_manager=run_manager
+        ),
     }
     builder = GraphBuilder(entry_point="research").add_nodes(nodes)
     for source, target in zip(_NODE_ORDER, _NODE_ORDER[1:]):
@@ -160,16 +196,13 @@ async def get_run_status(run_id: str) -> RunStatusResponse:
     )
 
 
-@app.get("/runs/{run_id}/package")
-async def get_run_package(run_id: str) -> dict[str, object]:
-    handle = _load_handle(run_id)
-    if handle.record.status is not RunStatus.COMPLETED:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Run {run_id} is {handle.record.status.value}, not completed.",
-        )
-    path = _package_path(handle)
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="Package artifact not found.")
-    package = json.loads(path.read_text(encoding="utf-8"))
-    return package["archive"]
+def main() -> None:
+    """Entrypoint for the ``marketingos`` console script (see pyproject.toml).
+
+    Binds ``0.0.0.0`` and reads ``$PORT`` — the convention most PaaS hosts
+    (Railway, Render, Fly, Heroku) use to tell a process which port to
+    listen on, injected at deploy time rather than hardcoded here.
+    """
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))

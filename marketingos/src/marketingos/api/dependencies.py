@@ -7,8 +7,12 @@ is priced against the same budget ceiling.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 from marketingos.agents.business_analysis import LanguageModelPort
 from marketingos.agents.designer import ImageGenerationPort
@@ -24,14 +28,43 @@ from marketingos.config import load_settings
 from marketingos.services.cost_guard import CostGuardBudgetLedger
 from marketingos.services.packaging_service import PackagingService
 from marketingos.services.run_manager import RunHandle, RunManager
-from marketingos.tools.image import GeminiImageClient, PlaceholderImageClient
-from marketingos.tools.llm import GeminiClient
-from marketingos.tools.video import VideoAssembler
+from marketingos.tools.factory import (
+    build_image_generator,
+    build_llm,
+    build_video_generator,
+)
 from marketingos.tools.web import InstagramPublicReader, WebsiteScraper
 
 __all__ = ["RunAdapters", "build_run_dependencies", "run_manager"]
 
-run_manager = RunManager()
+#: Project root (the directory holding ``pyproject.toml`` and ``.env``), four
+#: levels up from this file at ``<root>/src/marketingos/api/dependencies.py``.
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _load_project_env(root: Path = _PROJECT_ROOT) -> bool:
+    """Load ``<root>/.env`` into ``os.environ``; return whether a file loaded.
+
+    An explicit path keeps this deterministic regardless of the process's
+    working directory, so there is one source of truth (``marketingos/.env``)
+    rather than whichever ``.env`` happens to be nearest the cwd. Non-overriding
+    by design: a variable already present in the real environment (e.g. an
+    explicit shell export) still wins over the file.
+    """
+    return load_dotenv(root / ".env", override=False)
+
+
+# Load at import time — before the module-level ``RUNS_ROOT`` read below and
+# before ``build_run_dependencies`` constructs any client, all of which read
+# ``os.environ`` directly (the Gemini and Together clients read their API keys
+# from it).
+_load_project_env()
+
+#: Overrides where run artifacts (state, eval reports, packages) are written.
+#: Defaults to the existing relative path so local dev is unaffected; set
+#: this to a mounted volume's path on hosts without a durable working
+#: directory across deploys/restarts.
+run_manager = RunManager(runs_root=Path(os.environ.get("RUNS_ROOT", "data/runs")))
 
 
 @dataclass(slots=True)
@@ -68,18 +101,12 @@ def build_run_dependencies(max_budget: Decimal) -> tuple[RunHandle, RunAdapters]
     guard = handle.guard
 
     adapters = RunAdapters(
-        llm=GeminiClient(
-            cost_guard=guard,
-            model=settings.models.default_llm,
-            default_max_output_tokens=settings.models.max_tokens,
-        ),
-        # Swapped back to GeminiImageClient once billing/quota is available.
-        # image_generator=GeminiImageClient(
-        #     cost_guard=guard,
-        #     model=settings.models.default_image_model,
-        # ),
-        image_generator=PlaceholderImageClient(),
-        video_generator=VideoAssembler(cost_guard=guard),
+        # Which concrete client each of these is comes from config
+        # (settings.models.*_provider), resolved by the provider factory —
+        # switching provider or model is a YAML edit, not a code change.
+        llm=build_llm(settings.models, guard),
+        image_generator=build_image_generator(settings.models, guard),
+        video_generator=build_video_generator(settings.models, guard),
         website_scraper=WebsiteScraper(cost_guard=guard),
         instagram_reader=InstagramPublicReader(cost_guard=guard),
         packaging_service=PackagingService(

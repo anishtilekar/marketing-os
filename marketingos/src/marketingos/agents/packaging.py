@@ -1,7 +1,7 @@
 """PackagingAgent — final campaign assembly and delivery packaging.
 
-The :class:`PackagingAgent` receives a :class:`PackagingRequest` — the fully
-approved campaign artifacts together with their passing
+The :class:`PackagingAgent` receives a :class:`PackagingRequest` — the
+campaign artifacts together with their
 :class:`~marketingos.agents.qa.QAReport` — and produces a
 :class:`CampaignPackage`: the manifest, metadata, asset index with
 checksums, README summary and the final archive reference, all organised in
@@ -9,9 +9,13 @@ the MarketingOS run structure.
 
 Scope and guarantees
 --------------------
-* **QA gate.** Packaging is only reachable with a non-failed QA report: the
-  :class:`PackagingRequest` model refuses to be constructed from a failed
-  report, and the agent re-checks the gate at run time as defence in depth.
+* **QA is advisory, not a gate.** Packaging proceeds regardless of the QA
+  verdict, so a run always yields a deliverable to inspect. The full
+  :class:`~marketingos.agents.qa.QAReport` — including any ``error``-severity
+  findings — is shipped inside the package as ``qa_report.json`` and its
+  status is surfaced in the metadata's ``qa_status`` for the approver to act
+  on. Only structural consistency (the report must audit *this* bundle) is
+  still enforced.
 * **Coordination only.** All filesystem and compression work is delegated
   to an injected tool satisfying :class:`PackagingServicePort` (staging
   files into the run structure, computing checksums, producing the final
@@ -136,10 +140,11 @@ class PackagingServicePort(Protocol):
 
 
 class PackagingRequest(BaseModel):
-    """Typed input pairing the approved campaign with its QA report.
+    """Typed input pairing the campaign bundle with its QA report.
 
-    Construction enforces the QA gate: a failed report is rejected, as is a
-    report that was produced for a different campaign.
+    Construction enforces structural consistency only: a report produced for
+    a different campaign is rejected. The QA *verdict* is advisory — a failed
+    report is accepted and travels with the package rather than blocking it.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -148,13 +153,15 @@ class PackagingRequest(BaseModel):
     qa_report: QAReport
 
     @model_validator(mode="after")
-    def _validate_gate(self) -> "PackagingRequest":
-        """Reject unapproved or mismatched packaging requests."""
-        if self.qa_report.status is QAStatus.FAILED:
-            raise ValueError(
-                "campaign failed QA and cannot be packaged; resolve the "
-                "report's errors first"
-            )
+    def _validate_gate(self) -> PackagingRequest:
+        """Reject only *mismatched* requests; the QA verdict is advisory.
+
+        A ``failed`` QA report no longer blocks packaging — the report is
+        shipped with the package for the approver to act on. What is still
+        enforced is structural consistency: the report must audit the very
+        plan being packaged, so the shipped verdict describes this bundle
+        and not some other run.
+        """
         if self.qa_report.source_plan_run_id != self.bundle.week_plan.run_id:
             raise ValueError(
                 "QA report audits plan run "
@@ -254,7 +261,7 @@ class CampaignPackage(BaseModel):
     created_at: datetime
 
     @model_validator(mode="after")
-    def _validate_consistency(self) -> "CampaignPackage":
+    def _validate_consistency(self) -> CampaignPackage:
         """The manifest, index and archive must describe the same package."""
         paths = [entry.packaged_path for entry in self.asset_index]
         if len(set(paths)) != len(paths):
@@ -289,10 +296,13 @@ class CampaignPackage(BaseModel):
 
 
 class QAGateNotPassedError(PermanentAgentError):
-    """Packaging was invoked for a campaign whose QA report failed.
+    """A failed campaign was packaged under a strict (non-advisory) QA gate.
 
-    Permanent: retrying cannot approve a failed campaign; the orchestration
-    layer must resolve the QA findings and re-audit first.
+    Retained as public API for callers that choose to enforce a hard QA gate
+    themselves. The built-in :class:`PackagingAgent` treats QA as advisory
+    and does **not** raise this — a failed report is shipped with the package
+    rather than blocking it. Permanent when raised: retrying cannot approve a
+    failed campaign; the QA findings must be resolved and re-audited first.
     """
 
 
@@ -334,16 +344,15 @@ class PackagingAgent(BaseAgent[PackagingRequest, CampaignPackage]):
 
     Workflow:
 
-    1. Re-check the QA gate (defence in depth over the input validator).
-    2. Stage every media asset (5 post images, 2 videos) into the run
+    1. Stage every media asset (5 post images, 2 videos) into the run
        structure through the packaging service, concurrently.
-    3. Stage the campaign documents: the approved artifacts as JSON, the QA
+    2. Stage the campaign documents: the approved artifacts as JSON, the QA
        report, the generated README and metadata.
-    4. Build the manifest from the staged results and stage it last, so it
+    3. Build the manifest from the staged results and stage it last, so it
        describes the completed run.
-    5. Ask the service to finalise (compress) the run and return the
+    4. Ask the service to finalise (compress) the run and return the
        archive reference.
-    6. Assemble the :class:`CampaignPackage`, whose construction verifies
+    5. Assemble the :class:`CampaignPackage`, whose construction verifies
        manifest/index consistency.
 
     Transient service failures (timeouts, connection errors) surface as
@@ -391,18 +400,9 @@ class PackagingAgent(BaseAgent[PackagingRequest, CampaignPackage]):
 
         Returns:
             The :class:`CampaignPackage` referencing every packaged artifact.
-
-        Raises:
-            QAGateNotPassedError: If the QA report is failed (only possible
-                for requests built without validation).
+            Produced regardless of the QA verdict — the report travels with
+            the package rather than blocking it.
         """
-        if payload.qa_report.status is QAStatus.FAILED:
-            raise QAGateNotPassedError(
-                "Campaign failed QA and cannot be packaged.",
-                agent_name=self.name,
-                run_id=run_id,
-            )
-
         bundle = payload.bundle
         root = f"{self._settings.root_prefix}/{run_id}"
         created_at = datetime.now(UTC)

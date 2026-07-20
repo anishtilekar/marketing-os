@@ -199,14 +199,15 @@ class InstagramPublicReader(Tool[InstagramReadRequest, InstagramProfileSnapshot]
                 "typically an app-shell page with no server-rendered content."
             )
 
-        followers = following = posts = None
+        followers = posts = None
         full_name = None
         if og_title:
             counts = _COUNTS_PATTERN.search(og_title)
             name_source = og_title
             if counts:
                 followers = _parse_count(counts.group(1))
-                following = _parse_count(counts.group(2))
+                # counts.group(2) is the "following" count — parsed by the
+                # pattern but unused: the snapshot model has no field for it.
                 posts = _parse_count(counts.group(3))
                 # Search for the name only *after* the counts prefix —
                 # searching the whole title would let the non-greedy

@@ -47,14 +47,51 @@ class WorkflowSettings(BaseModel):
 
 
 class ModelSettings(BaseModel):
-    """Default LLM model configuration."""
+    """Model and provider configuration.
 
+    A *provider* names which concrete client the factory
+    (:mod:`marketingos.tools.factory`) builds for a capability; the model id
+    names which model that client calls. Both are configuration, so
+    switching provider or model is a YAML edit, never a code change. The
+    ``*_provider`` fields carry defaults so an existing minimal
+    ``models.yaml`` keeps loading unchanged.
+    """
+
+    # -- text generation (LLM) --------------------------------------------
+    llm_provider: str = "gemini"
     default_llm: str
     fallback_llm: str
     temperature: float
     max_tokens: int
-    default_image_model: str
+    llm_input_cost_per_1k: Decimal = Decimal("0")
+    llm_output_cost_per_1k: Decimal = Decimal("0")
+
+    # -- image generation --------------------------------------------------
+    image_provider: str = "placeholder"
+    default_image_model: str | None = None
     image_quality: str
+    image_cost_per_image: Decimal = Decimal("0")
+
+    # -- video generation --------------------------------------------------
+    video_provider: str = "local_assembler"
+
+    @field_validator(
+        "llm_input_cost_per_1k",
+        "llm_output_cost_per_1k",
+        "image_cost_per_image",
+        mode="before",
+    )
+    @classmethod
+    def _exact_decimal(cls, value: object) -> object:
+        """Convert a YAML float to Decimal through its text form.
+
+        Same correction ``BudgetSettings`` applies: ``Decimal(str(0.1))`` is
+        exactly ``Decimal("0.1")``, avoiding the binary-float error a bare
+        ``Decimal(0.1)`` would inherit.
+        """
+        if isinstance(value, float):
+            return Decimal(str(value))
+        return value
 
 
 class AgentConfig(BaseModel):

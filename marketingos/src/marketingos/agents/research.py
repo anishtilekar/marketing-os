@@ -52,6 +52,7 @@ from marketingos.agents.base import (
 __all__ = [
     "BusinessSearchPort",
     "ContactDetails",
+    "OrganizationFacts",
     "FactCategory",
     "InstagramProfileSnapshot",
     "InstagramReaderPort",
@@ -114,6 +115,22 @@ class ContactDetails(BaseModel):
     addresses: tuple[str, ...] = ()
 
 
+class OrganizationFacts(BaseModel):
+    """Organization identity a site declares in its JSON-LD structured data.
+
+    Structured data is authored by the site itself for search engines, so
+    it is first-party self-description — the same evidentiary standing as
+    a tagline, and often the only real content in the initial HTML of a
+    JS-rendered storefront.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str | None = None
+    description: str | None = None
+    same_as: tuple[str, ...] = ()
+
+
 class WebsiteSnapshot(BaseModel):
     """Factual content extracted from a business website by the scraper."""
 
@@ -124,6 +141,8 @@ class WebsiteSnapshot(BaseModel):
     tagline: str | None = None
     about_text: str | None = None
     main_text: str | None = None
+    headings: tuple[str, ...] = ()
+    organization: OrganizationFacts | None = None
     products_services: tuple[str, ...] = ()
     contact: ContactDetails = Field(default_factory=ContactDetails)
     pages_visited: tuple[str, ...] = ()
@@ -572,6 +591,32 @@ class ResearchAgent(BaseAgent[ResearchInput, ResearchResult]):
                 f'The main content of {snapshot.url} includes: '
                 f'"{self._excerpt(snapshot.main_text)}"',
             )
+        if snapshot.headings:
+            listed = ", ".join(f'"{heading}"' for heading in snapshot.headings[:8])
+            add(
+                FactCategory.WEBSITE_CONTENT,
+                f"Prominent headings on {snapshot.url} include: {listed}.",
+            )
+        if snapshot.organization is not None:
+            org = snapshot.organization
+            if org.name:
+                add(
+                    FactCategory.BRAND_MESSAGING,
+                    f"The structured data of {snapshot.url} declares the "
+                    f'organization name "{org.name}".',
+                )
+            if org.description:
+                add(
+                    FactCategory.ABOUT,
+                    f"The structured data of {snapshot.url} describes the "
+                    f'organization as: "{self._excerpt(org.description)}"',
+                )
+            for profile_url in org.same_as:
+                add(
+                    FactCategory.SOCIAL_PRESENCE,
+                    f"The structured data of {snapshot.url} lists the "
+                    f"official profile {profile_url}.",
+                )
         for offering in snapshot.products_services:
             add(
                 FactCategory.PRODUCTS_SERVICES,
